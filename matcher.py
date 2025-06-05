@@ -1,4 +1,4 @@
-
+from typing import Union, List, Optional
 from pathlib import Path
 
 import torch
@@ -55,7 +55,7 @@ class KNeighborsVC(nn.Module):
         self.sr = self.h.sampling_rate
         self.hop_length = 320
 
-    def get_matching_set(self, wavs: list[Path] | list[Tensor], weights=None, vad_trigger_level=7) -> Tensor:
+    def get_matching_set(self, wavs: Union[List[Path], List[Tensor]], weights=None, vad_trigger_level=7) -> Tensor:
         """ Get concatenated wavlm features for the matching set using all waveforms in `wavs`, 
         specified as either a list of paths or list of loaded waveform tensors of 
         shape (channels, T), assumed to be of 16kHz sample rate.
@@ -128,8 +128,8 @@ class KNeighborsVC(nn.Module):
 
     @torch.inference_mode()
     def match(self, query_seq: Tensor, matching_set: Tensor, synth_set: Tensor = None, 
-              topk: int = 4, tgt_loudness_db: float | None = -16,
-              target_duration: float | None = None, device: str | None = None) -> Tensor:
+              topk: int = 4, tgt_loudness_db: Optional[float] = -16,
+              target_duration: Optional[float] = None, device: Optional[str] = None) -> Tensor:
         """ Given `query_seq`, `matching_set`, and `synth_set` tensors of shape (N, dim), perform kNN regression matching
         with k=`topk`. Inputs:
             - `query_seq`: Tensor (N1, dim) of the input/source query features.

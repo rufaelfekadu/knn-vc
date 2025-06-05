@@ -14,6 +14,7 @@ import torchaudio
 from fastprogress.fastprogress import master_bar, progress_bar
 from torch import Tensor
 
+
 from hubconf import wavlm_large
 
 DOWNSAMPLE_FACTOR = 320
@@ -25,12 +26,16 @@ synthesis_cache = {}
 
 def make_librispeech_df(root_path: Path) -> pd.DataFrame:
     all_files = []
-    folders = ['train-clean-100', 'dev-clean']
-    print(f"[LIBRISPEECH] Computing folders {folders}")
-    for f in folders:
-        all_files.extend(list((root_path/f).rglob('**/*.flac')))
-    speakers = ['ls-' + f.stem.split('-')[0] for f in all_files]
+    speakers = []
+    # folders = ['train-clean-100', 'dev-clean']
+    # print(f"[LIBRISPEECH] Computing folders {folders}")
+    for f in os.listdir(root_path):
+        file_per_speaker = list((root_path/f).rglob('*.wav'))
+        all_files.extend(file_per_speaker)
+        speakers.extend(f for _ in file_per_speaker)
+    # speakers = ['ls-' + f.stem.split('-')[0] for f in all_files]
     df = pd.DataFrame({'path': all_files, 'speaker': speakers})
+    # df['path'] = df['path'].apply(str)
     return df
 
 
@@ -41,7 +46,6 @@ def main(args):
 
     print(f"Matching weightings: {MATCH_WEIGHTINGS.squeeze()}\nSynthesis weightings: {SYNTH_WEIGHTINGS.squeeze()}")
     ls_df = make_librispeech_df(Path(args.librispeech_path))
-
     print(f"Loading wavlm.")
     wavlm = wavlm_large(pretrained=True, progress=True, device=args.device)
 
@@ -54,7 +58,7 @@ def main(args):
 def path2pools(path: Path, wavlm: nn.Module(), match_weights: Tensor, synth_weights: Tensor, device):
     """Given a waveform `path`, compute the matching pool"""
 
-    uttrs_from_same_spk = sorted(list(path.parent.rglob('**/*.flac')))
+    uttrs_from_same_spk = sorted(list(path.parent.rglob('*.wav')))
     uttrs_from_same_spk.remove(path)
     matching_pool = []
     synth_pool = []
@@ -79,7 +83,7 @@ def path2pools(path: Path, wavlm: nn.Module(), match_weights: Tensor, synth_weig
 @torch.inference_mode()
 def get_full_features(path, wavlm, device):
 
-    x, sr = torchaudio.load(path)
+    x, sr = torchaudio.load(str(path))
     assert sr == 16000
     # This does not work i.t.o the hifigan training.
     # x = F.pad(x, (DOWNSAMPLE_FACTOR//2, DOWNSAMPLE_FACTOR - DOWNSAMPLE_FACTOR//2), value=0)
