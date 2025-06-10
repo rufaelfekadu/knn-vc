@@ -24,18 +24,18 @@ feature_cache = {}
 global synthesis_cache
 synthesis_cache = {}
 
+def find_audio(path, ext='.wav'):
+    audio_files = []
+    for root, dirs, files in os.walk(path, followlinks=True):
+        for file in files:
+            if file.endswith(ext):
+                audio_files.append(os.path.join(root, file))
+    return audio_files
+
 def make_librispeech_df(root_path: Path) -> pd.DataFrame:
-    all_files = []
-    speakers = []
-    # folders = ['train-clean-100', 'dev-clean']
-    # print(f"[LIBRISPEECH] Computing folders {folders}")
-    for f in os.listdir(root_path):
-        file_per_speaker = list((root_path/f).rglob('*.wav'))
-        all_files.extend(file_per_speaker)
-        speakers.extend(f for _ in file_per_speaker)
-    # speakers = ['ls-' + f.stem.split('-')[0] for f in all_files]
-    df = pd.DataFrame({'path': all_files, 'speaker': speakers})
-    # df['path'] = df['path'].apply(str)
+    audio_files = find_audio(root_path, ext='.wav')
+    df = pd.DataFrame(audio_files, columns=['audio_path'])
+    df['speaker'] = df['audio_path'].apply(lambda x: x.split('/')[-2])
     return df
 
 
@@ -45,13 +45,13 @@ def main(args):
     MATCH_WEIGHTINGS = F.one_hot(torch.tensor(args.matching_layer), num_classes=25).float().to(device)[:, None]
 
     print(f"Matching weightings: {MATCH_WEIGHTINGS.squeeze()}\nSynthesis weightings: {SYNTH_WEIGHTINGS.squeeze()}")
-    ls_df = make_librispeech_df(Path(args.librispeech_path))
+    ls_df = make_librispeech_df(Path(args.audio_path))
     print(f"Loading wavlm.")
     wavlm = wavlm_large(pretrained=True, progress=True, device=args.device)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    extract(ls_df, wavlm, args.device, Path(args.librispeech_path), Path(args.out_path), SYNTH_WEIGHTINGS, MATCH_WEIGHTINGS)
+    extract(ls_df, wavlm, args.device, Path(args.audio_path), Path(args.out_path), SYNTH_WEIGHTINGS, MATCH_WEIGHTINGS)
     print("All done!", flush=True)
 
 
@@ -161,7 +161,7 @@ def extract(df: pd.DataFrame, wavlm: nn.Module, device, ls_path: Path, out_path:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Compute matched wavlm features for a librispeech dataset")
 
-    parser.add_argument('--librispeech_path', required=True, type=str)
+    parser.add_argument('--audio_path', required=True, type=str)
     parser.add_argument('--seed', default=123, type=int)
     parser.add_argument('--out_path', required=True, type=str)
     parser.add_argument('--device', default='cuda', type=str)
