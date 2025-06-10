@@ -29,13 +29,13 @@ def find_audio(path, ext='.wav'):
     for root, dirs, files in os.walk(path, followlinks=True):
         for file in files:
             if file.endswith(ext):
-                audio_files.append(os.path.join(root, file))
+                audio_files.append(Path(os.path.join(root, file)))
     return audio_files
 
 def make_librispeech_df(root_path: Path) -> pd.DataFrame:
     audio_files = find_audio(root_path, ext='.wav')
-    df = pd.DataFrame(audio_files, columns=['audio_path'])
-    df['speaker'] = df['audio_path'].apply(lambda x: x.split('/')[-2])
+    df = pd.DataFrame(audio_files, columns=['path'])
+    df['speaker'] = df['path'].apply(lambda x: x.parent.name)
     return df
 
 
