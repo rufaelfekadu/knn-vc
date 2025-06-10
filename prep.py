@@ -27,7 +27,7 @@ if __name__ == '__main__':
     audio_files = find_audio(audio_dir)
     df_audio = pd.DataFrame(audio_files, columns=['audio_path'])
 
-    df_audio['feat_path'] = df_audio['audio_path'].apply(lambda x: x.replace('.wav', '.pt').replace('data', 'outputs'))
+    df_audio['feat_path'] = df_audio['audio_path'].apply(lambda x: x.replace('.wav', '.pt'))
     df_audio['speaker'] = df_audio['audio_path'].apply(lambda x: x.split('/')[-2])
     df_audio['subset'] = df_audio['audio_path'].apply(lambda x: 'test' if 'test' in x else 'train')
 
