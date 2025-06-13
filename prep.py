@@ -2,6 +2,9 @@ import pandas as pd
 import glob
 import os
 import argparse
+import soundfile as sf
+import swifter
+
 
 def find_audio(path, ext='.wav'):
     audio_files = []
@@ -11,6 +14,14 @@ def find_audio(path, ext='.wav'):
                 audio_files.append(os.path.join(root, file))
     return audio_files
 
+def get_duration(audio_path):
+    try:
+        data, samplerate = sf.read(audio_path)
+        duration = len(data) / samplerate
+        return duration
+    except Exception as e:
+        print(f"Error reading {audio_path}: {e}")
+        return None
 
 if __name__ == '__main__':
 
@@ -29,10 +40,16 @@ if __name__ == '__main__':
 
     df_audio['feat_path'] = df_audio['audio_path'].apply(lambda x: x.replace('.wav', '.pt').replace('data', 'outputs'))
     df_audio['speaker'] = df_audio['audio_path'].apply(lambda x: x.split('/')[-2])
-    df_audio['subset'] = df_audio['audio_path'].apply(lambda x: 'test' if 'test' in x else 'train')
+    df_audio['split'] = df_audio['audio_path'].apply(lambda x: 'test' if 'test' in x else 'train')
+    
+    # Use swifter for parallel processing of the duration calculation
+    df_audio['duration'] = df_audio['audio_path'].swifter.apply(get_duration)
+    print(f"Total audio duration: {df_audio['duration'].sum():.2f} seconds")
+    print(f"Average file duration: {df_audio['duration'].mean():.2f} seconds")
+    df_audio.drop(columns=['feat_path'], errors='ignore').to_csv(os.path.join(output_dir, 'stats.csv'), index=False)
 
-    df_test = df_audio[df_audio['subset'] == 'test'].copy()
-    df_train = df_audio[df_audio['subset'] == 'train'].copy()
+    df_test = df_audio[df_audio['split'] == 'test'].copy()
+    df_train = df_audio[df_audio['split'] == 'train'].copy()
 
     # split train set into train and valid
     df_train = df_train.sample(frac=1).reset_index(drop=True)  # shuffle the train set

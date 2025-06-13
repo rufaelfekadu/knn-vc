@@ -52,7 +52,7 @@ def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNe
 
 def main(args):
 
-    valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc']
+    valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B']
     # get the knnvc model
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
     df = pd.read_csv(args.stats_csv)
@@ -60,10 +60,9 @@ def main(args):
     df= df[df['speaker'].isin(valid_speakers)]
 
     with open(args.pairs, 'r') as f:
-        PAIRS = [tuple(line.strip().split(',')) for line in f.readlines()]
+        PAIRS = [tuple(line.strip().split(' ')) for line in f.readlines()]
 
     pair = defaultdict(list)
-
     # total_speakers = df['speaker'].unique()
     # spk_pairs = [(s1, s2) for i, s1 in enumerate(total_speakers) for s2 in total_speakers[i+1:] if s1 != s2]
 
@@ -106,7 +105,6 @@ if __name__ == '__main__':
     parser.add_argument('--out_dir', type=str, default='outputs/cloned_audio_pair', help='Path to the output directory')
     parser.add_argument('--ckpt_path', type=str, default='outputs/checkpoints', help='Path to the checkpoint')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
-    parser.add_argument('--n_src', type=int, default=100, help='Number of source speakers')
     parser.add_argument('--n_ref', type=int, default=10, help='Number of reference speakers')
     args = parser.parse_args()
     main(args)
