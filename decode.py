@@ -52,11 +52,11 @@ def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNe
 
 def main(args):
 
-    valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B']
+    valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B', 'female_ag']
     # get the knnvc model
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
     df = pd.read_csv(args.stats_csv)
-    df = df[df['split'] == 'test']
+    # df = df[df['split'] == 'test']
     df= df[df['speaker'].isin(valid_speakers)]
 
     with open(args.pairs, 'r') as f:
@@ -67,16 +67,18 @@ def main(args):
     # spk_pairs = [(s1, s2) for i, s1 in enumerate(total_speakers) for s2 in total_speakers[i+1:] if s1 != s2]
 
     for source , target in PAIRS:
+
+        output_dir = Path(args.out_dir) / f'{source}-{target}'
+        os.makedirs(output_dir, exist_ok=True)
+        if len(os.listdir(output_dir)) > 0:
+            print(f"Skipping {source}-{target} as output directory is not empty.")
+            continue
+        
         
         # get the source test wav paths
         src_wav_paths = df[df['speaker'] == source]['audio_path'].values
         ref_wav_paths = df[df['speaker'] == target].sort_values('duration', ascending=False).head(args.n_ref)['audio_path'].tolist()
-        output_dir = Path(args.out_dir) / f'{source}-{target}'
-        os.makedirs(output_dir, exist_ok=True)
-
-        if len(os.listdir(output_dir)) > 0:
-            print(f"Skipping {source}-{target} as output directory is not empty.")
-            continue
+        print(df)
         
         for src_wav_path in tqdm(src_wav_paths):
             query_seq = knnvc.get_features(src_wav_path)

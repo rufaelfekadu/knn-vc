@@ -34,8 +34,8 @@ def find_audio(path, ext='.wav'):
 
 def make_librispeech_df(root_path: Path) -> pd.DataFrame:
     audio_files = find_audio(root_path, ext='.wav')
-    df = pd.DataFrame(audio_files, columns=['audio_path'])
-    df['speaker'] = df['audio_path'].apply(lambda x: x.split('/')[-2])
+    df = pd.DataFrame(audio_files, columns=['path'])
+    df['speaker'] = df['path'].apply(lambda x: x.split('/')[-2])
     return df
 
 
@@ -125,10 +125,10 @@ def extract(df: pd.DataFrame, wavlm: nn.Module, device, ls_path: Path, out_path:
         if Path(row.path) in feature_cache:
             source_feats = feature_cache[Path(row.path)].float()
         else:
-            source_feats = get_full_features(row.path, wavlm, device)
+            source_feats = get_full_features(Path(row.path), wavlm, device)
             source_feats = ( source_feats*match_weights[:, None] ).sum(dim=0) # (seq_len, dim)
 
-        matching_pool, synth_pool = path2pools(row.path, wavlm, match_weights, synth_weights, device)
+        matching_pool, synth_pool = path2pools(Path(row.path), wavlm, match_weights, synth_weights, device)
 
         if not args.prematch:
             out_feats = source_feats.cpu()
