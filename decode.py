@@ -10,8 +10,14 @@ import pandas as pd
 from collections import defaultdict
 import soundfile as sf
 from tqdm import tqdm
+import torchaudio
 
 # PAIRS = [('female_ab', 'female_ad'), ('male_aa', 'male_ac'),('male_ac','female_ab'),('female_ad', 'male_aa'), ('male_asc','female_ab')]
+
+def add_noise(wav, snr=0.01):
+    """ Add noise to the waveform """
+    noise = torch.randn_like(wav) * snr
+    return wav + noise
 
 def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
     # load the generator from chekpoint
@@ -52,7 +58,8 @@ def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNe
 
 def main(args):
 
-    valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B', 'female_ag']
+    # valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B', 'female_af', 'female_ag', 'male_ae']
+    valid_speakers = ['male_ae', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B']
     # get the knnvc model
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
     df = pd.read_csv(args.stats_csv)
@@ -67,28 +74,45 @@ def main(args):
     # spk_pairs = [(s1, s2) for i, s1 in enumerate(total_speakers) for s2 in total_speakers[i+1:] if s1 != s2]
 
     for source , target in PAIRS:
+        
+        tgt_folder = f'{source}-{target}'
+        if args.add_noise:
+            tgt_folder += '-noise'
+        output_dir = Path(args.out_dir) / tgt_folder
 
-        output_dir = Path(args.out_dir) / f'{source}-{target}'
         os.makedirs(output_dir, exist_ok=True)
         if len(os.listdir(output_dir)) > 0:
             print(f"Skipping {source}-{target} as output directory is not empty.")
             continue
         
-        
         # get the source test wav paths
         src_wav_paths = df[df['speaker'] == source]['audio_path'].values
         ref_wav_paths = df[df['speaker'] == target].sort_values('duration', ascending=False).head(args.n_ref)['audio_path'].tolist()
-        print(df)
-        
+
         for src_wav_path in tqdm(src_wav_paths):
-            query_seq = knnvc.get_features(src_wav_path)
+            # Load the source audio file
+            aud, sr = torchaudio.load(src_wav_path, normalize=True)
+
+            if args.add_noise:
+                aud = add_noise(aud, snr=0.01)
+                # save the noisy audio
+                noisy_wav_path = output_dir / 'noise' / f'{Path(src_wav_path).stem}.wav'
+                os.makedirs(noisy_wav_path.parent, exist_ok=True)
+                sf.write(noisy_wav_path, aud.squeeze().cpu().numpy(), samplerate=sr)
+
+
+            query_seq = knnvc.get_features(aud)
             matching_set = knnvc.get_matching_set(ref_wav_paths)
             out_wav = knnvc.match(query_seq, matching_set, topk=4)
 
             # Save the generated audio tensor as a .wav file
             out_wav = out_wav.squeeze().cpu().numpy()
-            out_wav_path = output_dir / f'{Path(src_wav_path).stem}.wav'
+            if args.add_noise:
+                out_wav_path = output_dir / 'gen' / f'{Path(src_wav_path).stem}.wav'
+            else:
+                out_wav_path = output_dir / f'{Path(src_wav_path).stem}.wav'
             
+            os.makedirs(out_wav_path.parent, exist_ok=True)
             # Save the generated audio tensor as a .wav file using soundfile
             sf.write(out_wav_path, out_wav, samplerate=16000)
 
@@ -108,5 +132,6 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path', type=str, default='outputs/checkpoints', help='Path to the checkpoint')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
     parser.add_argument('--n_ref', type=int, default=10, help='Number of reference speakers')
+    parser.add_argument('--add_noise', action='store_true', help='Add noise to the generated audio')
     args = parser.parse_args()
     main(args)
