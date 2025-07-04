@@ -122,7 +122,6 @@ class KNeighborsVC(nn.Module):
             features = torch.cat([x.transpose(0, 1) for x, _ in layer_results], dim=0) # (n_layers, seq_len, dim)
             # save full sequence
             features = ( features*weights[:, None] ).sum(dim=0) # (seq_len, dim)
-        
         return features
 
 
@@ -163,9 +162,14 @@ class KNeighborsVC(nn.Module):
         
         # normalization
         if tgt_loudness_db is not None:
-            src_loudness = torchaudio.functional.loudness(prediction[None], self.h.sampling_rate)
-            tgt_loudness = tgt_loudness_db
-            pred_wav = torchaudio.functional.gain(prediction, tgt_loudness - src_loudness)
+            try:
+                
+                src_loudness = torchaudio.functional.loudness(prediction[None], self.h.sampling_rate)
+                tgt_loudness = tgt_loudness_db
+                pred_wav = torchaudio.functional.gain(prediction, tgt_loudness - src_loudness)
+            except:
+                print("Error in loudness normalization, using original prediction")
+                pred_wav = prediction
         else: pred_wav = prediction
         return pred_wav
 

@@ -11,20 +11,78 @@ from collections import defaultdict
 import soundfile as sf
 from tqdm import tqdm
 import torchaudio
+import numpy as np
+import fnmatch
+from transformers import SpeechT5Processor, SpeechT5ForSpeechToText, AutoProcessor, AutoModelForSpeechSeq2Seq
+SPEECHT5_PRETRAINED_MODEL = "mbzuai/artst_asr_v2"
 
 # PAIRS = [('female_ab', 'female_ad'), ('male_aa', 'male_ac'),('male_ac','female_ab'),('female_ad', 'male_aa'), ('male_asc','female_ab')]
 
-def add_noise(wav, snr=0.01):
-    """ Add noise to the waveform """
-    noise = torch.randn_like(wav) * snr
-    return wav + noise
+def load_speecht5_model(device):
+    processor = SpeechT5Processor.from_pretrained(SPEECHT5_PRETRAINED_MODEL)
+    model = SpeechT5ForSpeechToText.from_pretrained(SPEECHT5_PRETRAINED_MODEL, cache_dir="./downloads").to(
+        device
+    )
+    processor = AutoProcessor.from_pretrained(SPEECHT5_PRETRAINED_MODEL)
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(SPEECHT5_PRETRAINED_MODEL, cache_dir='./downloads').to(device)
+    return model, processor
+
+class SemanticExtractor():
+    def __init__(self, model_type='wavlm', device='cuda'):
+        self.model_type = model_type
+        self.device = device
+        if model_type == 'wavlm':
+            self.model = wavlm_large(pretrained=True, progress=True, device=device)
+        elif model_type == 'artst':
+            self.model, self.processor = load_speecht5_model(device)
+        else:
+            raise ValueError(f"Model type {model_type} not supported")
+    def extract_features(self, wav_input_16khz, output_layer, ret_layer_results=False, **kwargs):
+        if self.model_type == 'wavlm':
+            return self.model.extract_features(wav_input_16khz, output_layer=output_layer, ret_layer_results=ret_layer_results)
+        elif self.model_type == 'artst':
+            try:
+                inputs = self.processor(audio=wav_input_16khz.squeeze().cpu(), return_tensors="pt", padding=True, sampling_rate=16000).to(self.device)
+                with torch.no_grad():   
+                    layer_results = self.model.speecht5.encoder(**inputs, output_hidden_states=True)
+                    features = torch.cat(layer_results['hidden_states'], dim=0) # (n_layers, seq_len, dim)
+                    return features[output_layer,:,:].unsqueeze(0)
+            except:
+                print(f"Error extracting features. ")
+        else:
+            raise ValueError(f"Model type {self.model_type} not supported")
+    def eval(self):
+        self.model.eval()
+        return self
+    
+def find_files(root_dir, query="*.wav", include_root_dir=True):
+    files = []
+    for root, dirnames, filenames in os.walk(root_dir, followlinks=True):
+        for filename in fnmatch.filter(filenames, query):
+            files.append(os.path.join(root, filename))
+    if not include_root_dir:
+        files = [file_.replace(root_dir + "/", "") for file_ in files]
+
+    return files
+
+def get_duration(audio_path):
+    try:
+        data, samplerate = sf.read(audio_path)
+        duration = len(data) / samplerate
+        return duration
+    except Exception as e:
+        print(f"Error reading {audio_path}: {e}")
 
 def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
     # load the generator from chekpoint
     cp = Path(__file__).parent.absolute()
+    if ckpt_dir is not None:
+        with open(os.path.join(ckpt_dir, 'config.json')) as f:
+            data = f.read()
+    else:
+        with open(cp/'hifigan'/'config_v1_wavlm.json') as f:
+            data = f.read()
 
-    with open(cp/'hifigan'/'config_v1_wavlm.json') as f:
-        data = f.read()
     json_config = json.loads(data)
     h = AttrDict(json_config)
     device = torch.device(device)
@@ -52,54 +110,48 @@ def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
 def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNeighborsVC:
     """ Load kNN-VC (WavLM encoder and HiFiGAN decoder). Optionally use vocoder trained on `prematched` data. """
     hifigan, hifigan_cfg = hifigan_wavlm(pretrained, ckpt_path, device)
-    wavlm = wavlm_large(pretrained, progress, device)
+    wavlm =  SemanticExtractor(model_type='artst', device=device)
     knnvc = KNeighborsVC(wavlm, hifigan, hifigan_cfg, device)
     return knnvc
 
 def main(args):
 
-    # valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B', 'female_af', 'female_ag', 'male_ae']
-    valid_speakers = ['male_ae', 'ar-XA-Wavenet-A', 'ar-XA-Wavenet-B']
-    # get the knnvc model
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
-    df = pd.read_csv(args.stats_csv)
-    # df = df[df['split'] == 'test']
-    df= df[df['speaker'].isin(valid_speakers)]
 
+    valid_speakers = ['ar-XA-Wavenet-D', 'ar-XA-Wavenet-B']
+    df = pd.read_csv(args.stats_csv)
+    df = df[df['split'] == 'test']
+    df = df[df['speaker'].isin(valid_speakers)]
+    df['audio_path'] = df.apply(lambda x: os.path.join(args.ref_root, x['speaker'], x['filename']), axis=1)
+    
     with open(args.pairs, 'r') as f:
-        PAIRS = [tuple(line.strip().split(' ')) for line in f.readlines()]
+        PAIRS = [tuple(line.strip().split('|')) for line in f.readlines()]
 
     pair = defaultdict(list)
-    # total_speakers = df['speaker'].unique()
-    # spk_pairs = [(s1, s2) for i, s1 in enumerate(total_speakers) for s2 in total_speakers[i+1:] if s1 != s2]
+    for (src , tgt) in PAIRS:
 
-    for source , target in PAIRS:
-        
-        tgt_folder = f'{source}-{target}'
-        if args.add_noise:
-            tgt_folder += '-noise'
+        if src in ['male_ae', 'female_af', 'female_ag']:
+            continue
+
+        tgt_folder = f'{src}-{tgt}'
         output_dir = Path(args.out_dir) / tgt_folder
-
+        src_path = Path(args.src_root) / src
+        ref_path = Path(args.ref_root) / tgt
         os.makedirs(output_dir, exist_ok=True)
         if len(os.listdir(output_dir)) > 0:
-            print(f"Skipping {source}-{target} as output directory is not empty.")
+            print(f"Skipping {src}-{tgt} as output directory is not empty.")
             continue
         
-        # get the source test wav paths
-        src_wav_paths = df[df['speaker'] == source]['audio_path'].values
-        ref_wav_paths = df[df['speaker'] == target].sort_values('duration', ascending=False).head(args.n_ref)['audio_path'].tolist()
-
-        for src_wav_path in tqdm(src_wav_paths):
-            # Load the source audio file
+        # get the src test wav paths
+        src_wav_paths = sorted(find_files(src_path, '*.wav'))
+        ref_wav_paths = sorted(find_files(ref_path, '*.wav'), key=lambda x: get_duration(x), reverse=True)[:args.n_ref]
+        
+        for src_wav_path in tqdm(src_wav_paths, desc=f"Processing {src}-{tgt}"):
+            # Load the src audio file
+            
             aud, sr = torchaudio.load(src_wav_path, normalize=True)
-
-            if args.add_noise:
-                aud = add_noise(aud, snr=0.01)
-                # save the noisy audio
-                noisy_wav_path = output_dir / 'noise' / f'{Path(src_wav_path).stem}.wav'
-                os.makedirs(noisy_wav_path.parent, exist_ok=True)
-                sf.write(noisy_wav_path, aud.squeeze().cpu().numpy(), samplerate=sr)
-
+            if sr != 16000:
+                aud = torchaudio.transforms.Resample(sr, 16000)(aud)
 
             query_seq = knnvc.get_features(aud)
             matching_set = knnvc.get_matching_set(ref_wav_paths)
@@ -107,25 +159,23 @@ def main(args):
 
             # Save the generated audio tensor as a .wav file
             out_wav = out_wav.squeeze().cpu().numpy()
-            if args.add_noise:
-                out_wav_path = output_dir / 'gen' / f'{Path(src_wav_path).stem}.wav'
-            else:
-                out_wav_path = output_dir / f'{Path(src_wav_path).stem}.wav'
-            
+            rel_out_path = Path(src_wav_path).relative_to(src_path)
+            out_wav_path = output_dir / rel_out_path.with_suffix('.wav')
+
             os.makedirs(out_wav_path.parent, exist_ok=True)
-            # Save the generated audio tensor as a .wav file using soundfile
             sf.write(out_wav_path, out_wav, samplerate=16000)
 
             pair['gen_wav_path'].append(out_wav_path)
             pair['src_wav_path'].append(src_wav_path)
 
-    
     pd.DataFrame(pair).to_csv(Path(args.out_dir) / 'match.csv', index=None)
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--src_root', type=str, default='data/ArVoice-16k/test', help='Path to the data directory')
+    parser.add_argument('--ref_root', type=str, default='data/ArVoice-16k/test', help='Path to the data directory')
     parser.add_argument('--stats_csv', type=str, default='data_splits/stats.csv', help='Path to the stats csv')
     parser.add_argument('--pairs', type=str, default='data_splits/pairs.txt', help='Path to the pairs txt file')
     parser.add_argument('--out_dir', type=str, default='outputs/cloned_audio_pair', help='Path to the output directory')

@@ -181,16 +181,16 @@ def main():
 
         # split after the first hyphen only
         srcspk , trgspk = pair.split("-", 1)
-        converted_files = sorted(find_files(os.path.join(args.gen_root, pair), query="*.wav"))
-        ref_files = sorted(find_files(os.path.join(args.tgt_root, f"ArVoice_syn-{srcspk}", f"{trgspk}"), query=f"test_*.wav"))
+        converted_files = sorted(find_files(os.path.join(args.gen_root, pair), query="*.wav"))[:50]
+        # ref_files = sorted(find_files(os.path.join(args.tgt_root,  f"{trgspk}"), query=f"test_*.wav"))
         print(f"srcspk: {srcspk}, trgspk: {trgspk}")
         print("number of utterances = {}".format(len(converted_files)))
-        print("number of reference files = {}".format(len(ref_files)))
+        # print("number of reference files = {}".format(len(ref_files)))
 
         er, cer, wer = _calculate_asr_score(
             model=asr_model,
             device="cuda" if torch.cuda.is_available() else "cpu",
-            file_list=ref_files,
+            file_list=converted_files,
             groundtruths=transcripts
         )
 
