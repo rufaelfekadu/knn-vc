@@ -10,78 +10,14 @@ import pandas as pd
 from collections import defaultdict
 import soundfile as sf
 from tqdm import tqdm
-import torchaudio
-import numpy as np
-import fnmatch
-from transformers import SpeechT5Processor, SpeechT5ForSpeechToText, AutoProcessor, AutoModelForSpeechSeq2Seq
-SPEECHT5_PRETRAINED_MODEL = "mbzuai/artst_asr_v2"
 
-
-def load_speecht5_model(device):
-    processor = SpeechT5Processor.from_pretrained(SPEECHT5_PRETRAINED_MODEL)
-    model = SpeechT5ForSpeechToText.from_pretrained(SPEECHT5_PRETRAINED_MODEL, cache_dir="./downloads").to(
-        device
-    )
-    processor = AutoProcessor.from_pretrained(SPEECHT5_PRETRAINED_MODEL)
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(SPEECHT5_PRETRAINED_MODEL, cache_dir='./downloads').to(device)
-    return model, processor
-
-class SemanticExtractor():
-    def __init__(self, model_type='wavlm', device='cuda'):
-        self.model_type = model_type
-        self.device = device
-        if model_type == 'wavlm':
-            self.model = wavlm_large(pretrained=True, progress=True, device=device)
-        elif model_type == 'artst':
-            self.model, self.processor = load_speecht5_model(device)
-        else:
-            raise ValueError(f"Model type {model_type} not supported")
-    def extract_features(self, wav_input_16khz, output_layer, ret_layer_results=False, **kwargs):
-        if self.model_type == 'wavlm':
-            return self.model.extract_features(wav_input_16khz, output_layer=output_layer, ret_layer_results=ret_layer_results)
-        elif self.model_type == 'artst':
-            try:
-                inputs = self.processor(audio=wav_input_16khz.squeeze().cpu(), return_tensors="pt", padding=True, sampling_rate=16000).to(self.device)
-                with torch.no_grad():   
-                    layer_results = self.model.speecht5.encoder(**inputs, output_hidden_states=True)
-                    features = torch.cat(layer_results['hidden_states'], dim=0) # (n_layers, seq_len, dim)
-                    return features[output_layer,:,:].unsqueeze(0)
-            except:
-                print(f"Error extracting features. ")
-        else:
-            raise ValueError(f"Model type {self.model_type} not supported")
-    def eval(self):
-        self.model.eval()
-        return self
-    
-def find_files(root_dir, query="*.wav", include_root_dir=True):
-    files = []
-    for root, dirnames, filenames in os.walk(root_dir, followlinks=True):
-        for filename in fnmatch.filter(filenames, query):
-            files.append(os.path.join(root, filename))
-    if not include_root_dir:
-        files = [file_.replace(root_dir + "/", "") for file_ in files]
-
-    return files
-
-def get_duration(audio_path):
-    try:
-        data, samplerate = sf.read(audio_path)
-        duration = len(data) / samplerate
-        return duration
-    except Exception as e:
-        print(f"Error reading {audio_path}: {e}")
 
 def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
     # load the generator from chekpoint
     cp = Path(__file__).parent.absolute()
-    if ckpt_dir is not None:
-        with open(os.path.join(ckpt_dir, 'config.json')) as f:
-            data = f.read()
-    else:
-        with open(cp/'hifigan'/'config_v1_wavlm.json') as f:
-            data = f.read()
 
+    with open(cp/'hifigan'/'config_v1_wavlm.json') as f:
+        data = f.read()
     json_config = json.loads(data)
     h = AttrDict(json_config)
     device = torch.device(device)
@@ -109,7 +45,7 @@ def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
 def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNeighborsVC:
     """ Load kNN-VC (WavLM encoder and HiFiGAN decoder). Optionally use vocoder trained on `prematched` data. """
     hifigan, hifigan_cfg = hifigan_wavlm(pretrained, ckpt_path, device)
-    wavlm =  SemanticExtractor(model_type='artst', device=device)
+    wavlm = wavlm_large(pretrained, progress, device)
     knnvc = KNeighborsVC(wavlm, hifigan, hifigan_cfg, device)
     return knnvc
 
@@ -124,7 +60,6 @@ def main(args):
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
 
     pair = defaultdict(list)
-    for (src , tgt) in PAIRS:
 
     print(f"running inference for {len(target_speakers)} target speakes")
 
@@ -173,7 +108,6 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path', type=str, default='outputs/checkpoints/baseline/g_02500000.pt', help='Path to the checkpoint')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
     parser.add_argument('--n_ref', type=int, default=10, help='Number of reference speakers')
-    parser.add_argument('--add_noise', action='store_true', help='Add noise to the generated audio')
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
