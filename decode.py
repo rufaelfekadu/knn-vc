@@ -11,7 +11,6 @@ from collections import defaultdict
 import soundfile as sf
 from tqdm import tqdm
 
-# PAIRS = [('female_ab', 'female_ad'), ('male_aa', 'male_ac'),('male_ac','female_ab'),('female_ad', 'male_aa'), ('male_asc','female_ab')]
 
 def hifigan_wavlm(pretrained=True, ckpt_dir=None, device='cuda'):
     # load the generator from chekpoint
@@ -53,47 +52,49 @@ def knn_vc(pretrained=True, progress=True, ckpt_path=None, device='cuda') -> KNe
 def main(args):
 
     valid_speakers = ['female_ab','female_ad', 'male_aa', 'male_ac', 'male_asc']
+
+    df =  pd.read_csv(args.manifest, delimiter="\t")
+    source_speakers = df[df['split'] == 'source_'+args.split]['speaker_id'].unique().tolist()
+    target_speakers = df[df['split'] == 'target']['speaker_id'].unique().tolist()
     # get the knnvc model
     knnvc = knn_vc(pretrained=True, progress=True, ckpt_path=args.ckpt_path, device=args.device)
-    df = pd.read_csv(args.stats_csv)
-    df = df[df['split'] == 'test']
-    df= df[df['speaker'].isin(valid_speakers)]
-
-    with open(args.pairs, 'r') as f:
-        PAIRS = [tuple(line.strip().split(',')) for line in f.readlines()]
 
     pair = defaultdict(list)
 
-    # total_speakers = df['speaker'].unique()
-    # spk_pairs = [(s1, s2) for i, s1 in enumerate(total_speakers) for s2 in total_speakers[i+1:] if s1 != s2]
+    print(f"running inference for {len(target_speakers)} target speakes")
 
-    for source , target in PAIRS:
+    for target_speaker in tqdm(target_speakers, total=len(target_speakers)):
+        ref_wav_paths = df[df['speaker_id'] == target_speaker]['audio_path'].values
+        # ref_wav_paths = df[df['speaker'] == target_speaker]['audio_path'].sort_values(ascending=False).head(args.n_ref).values
         
-        # get the source test wav paths
-        src_wav_paths = df[df['speaker'] == source]['audio_path'].values
-        ref_wav_paths = df[df['speaker'] == target].sort_values('duration', ascending=False).head(args.n_ref)['audio_path'].tolist()
-        output_dir = Path(args.out_dir) / f'{source}-{target}'
-        os.makedirs(output_dir, exist_ok=True)
+        for source_speaker in source_speakers:
 
-        if len(os.listdir(output_dir)) > 0:
-            print(f"Skipping {source}-{target} as output directory is not empty.")
-            continue
-        
-        for src_wav_path in tqdm(src_wav_paths):
-            query_seq = knnvc.get_features(src_wav_path)
-            matching_set = knnvc.get_matching_set(ref_wav_paths)
-            out_wav = knnvc.match(query_seq, matching_set, topk=4)
+            output_dir = Path(args.out_dir) / f'{source_speaker}->{target_speaker}'
+            os.makedirs(output_dir, exist_ok=True)
 
-            # Save the generated audio tensor as a .wav file
-            out_wav = out_wav.squeeze().cpu().numpy()
-            out_wav_path = output_dir / f'{Path(src_wav_path).stem}.wav'
+            source_utterances = df[df['speaker_id'] == source_speaker]['audio_path'].values
+            print(f"Converting {source_speaker} -> {target_speaker}")
+            for source_utterance in tqdm(source_utterances, desc=f"Converting {source_speaker} -> {target_speaker}", total=len(source_utterances)):
+
+                out_wav_path = output_dir / f'{Path(source_utterance).stem}.wav'
+
+                if os.path.isfile(out_wav_path):
+                    continue
+
+                query_seq = knnvc.get_features(source_utterance, vad_trigger_level=0.0)
+                matching_set = knnvc.get_matching_set(ref_wav_paths, vad_trigger_level=0.0)
+                out_wav = knnvc.match(query_seq, matching_set, topk=4)
+
+                # Save the generated audio tensor as a .wav file
+                out_wav = out_wav.squeeze().cpu().numpy()
             
-            # Save the generated audio tensor as a .wav file using soundfile
-            sf.write(out_wav_path, out_wav, samplerate=16000)
+                # Save the generated audio tensor as a .wav file using soundfile
+                sf.write(out_wav_path, out_wav, samplerate=16000)
 
-            pair['gen_wav_path'].append(out_wav_path)
-            pair['src_wav_path'].append(src_wav_path)
-
+                pair['gen_wav_path'].append(out_wav_path)
+                pair['src_wav_path'].append(source_utterance)
+                pair['target_speaker'].append(target_speaker)
+                pair['source_speaker'].append(source_speaker)
     
     pd.DataFrame(pair).to_csv(Path(args.out_dir) / 'match.csv', index=None)
 
@@ -101,12 +102,13 @@ def main(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--stats_csv', type=str, default='data_splits/stats.csv', help='Path to the stats csv')
-    parser.add_argument('--pairs', type=str, default='data_splits/pairs.txt', help='Path to the pairs txt file')
-    parser.add_argument('--out_dir', type=str, default='outputs/cloned_audio_pair', help='Path to the output directory')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/checkpoints', help='Path to the checkpoint')
+    parser.add_argument('--manifest', type=str, default='/workspace/datasets/corpora_splits.tsv', help='Path to the stats csv')
+    parser.add_argument('--split', type=str, default='test', help='Split to use (train, dev, test)')
+    parser.add_argument('--out_dir', type=str, default='outputs/generated/baseline', help='Path to the output directory')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/checkpoints/baseline/g_02500000.pt', help='Path to the checkpoint')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
-    parser.add_argument('--n_src', type=int, default=100, help='Number of source speakers')
     parser.add_argument('--n_ref', type=int, default=10, help='Number of reference speakers')
     args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
     main(args)
