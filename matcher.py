@@ -163,7 +163,10 @@ class KNeighborsVC(nn.Module):
         
         # normalization
         if tgt_loudness_db is not None:
-            src_loudness = torchaudio.functional.loudness(prediction[None], self.h.sampling_rate)
+            try:
+                src_loudness = torchaudio.functional.loudness(prediction[None], self.h.sampling_rate)
+            except:
+                breakpoint()
             tgt_loudness = tgt_loudness_db
             pred_wav = torchaudio.functional.gain(prediction, tgt_loudness - src_loudness)
         else: pred_wav = prediction
