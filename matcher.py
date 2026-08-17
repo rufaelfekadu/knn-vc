@@ -122,7 +122,6 @@ class KNeighborsVC(nn.Module):
             features = torch.cat([x.transpose(0, 1) for x, _ in layer_results], dim=0) # (n_layers, seq_len, dim)
             # save full sequence
             features = ( features*weights[:, None] ).sum(dim=0) # (seq_len, dim)
-        
         return features
 
 
